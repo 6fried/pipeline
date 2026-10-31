@@ -1,0 +1,65 @@
+# L'enchaînement partagé. Chaque projet l'appelle avec son Worker et son dossier.
+# Un seul endroit à corriger le jour où une commande change.
+name: deploiement
+
+on:
+  workflow_call:
+    inputs:
+      worker:
+        description: Nom du Worker Cloudflare
+        type: string
+        required: true
+      dossier:
+        description: Dossier à construire, à la racine du dépôt
+        type: string
+        required: true
+      construction:
+        description: Commande de construction
+        type: string
+        required: true
+      tests:
+        description: Commande de tests, vide si le projet n'en a pas
+        type: string
+        required: false
+        default: ''
+      apercu:
+        description: true pour publier une version d'aperçu au lieu de la production
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  tests:
+    if: inputs.tests != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Installer
+        working-directory: ${{ inputs.dossier }}
+        run: npm ci
+      - name: Tester
+        working-directory: ${{ inputs.dossier }}
+        run: ${{ inputs.tests }}
+
+  deployer:
+    needs: tests
+    if: always() && (needs.tests.result == 'success' || needs.tests.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Construire
+        working-directory: ${{ inputs.dossier }}
+        run: ${{ inputs.construction }}
+      - name: Mettre en ligne
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: ${{ inputs.dossier }}
+          command: ${{ inputs.apercu && 'versions upload' || 'deploy' }}
